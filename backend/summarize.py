@@ -1,4 +1,6 @@
 import operator
+import string
+import time
 from typing import Annotated, List, Literal, TypedDict
 
 from langchain.chains.combine_documents.reduce import acollapse_docs, split_list_of_docs
@@ -13,7 +15,7 @@ from langgraph.graph import END, START, StateGraph
 
 from backend.model import Model
 
-token_max = 1000
+token_max = 4096
 
 
 class OverallState(TypedDict):
@@ -49,12 +51,40 @@ class SummarizationService:
         self.reduce_chain = (
             PromptTemplate(template=reduce_template) | self.llm | StrOutputParser()
         )
+        # Construct the graph
+        # Nodes:
+        graph = StateGraph(OverallState)
+        graph.add_node("generate_summary", self.generate_summary)  # same as before
+        graph.add_node("collect_summaries", self.collect_summaries)
+        graph.add_node("collapse_summaries", self.collapse_summaries)
+        graph.add_node("generate_final_summary", self.generate_final_summary)
+
+        # Edges:
+        graph.add_conditional_edges(START, self.map_summaries, ["generate_summary"])
+        graph.add_edge("generate_summary", "collect_summaries")
+        graph.add_conditional_edges("collect_summaries", self.should_collapse)
+        graph.add_conditional_edges("collapse_summaries", self.should_collapse)
+        graph.add_edge("generate_final_summary", END)
+
+        self.app = graph.compile()
 
     def extract_pdf_text(self, pdf_path: str) -> str:
         text_splitter = TokenTextSplitter.from_tiktoken_encoder(
-            encoding_name="cl100k_base", chunk_size=1000, chunk_overlap=100
+            encoding_name="cl100k_base",
+            chunk_size=token_max,
+            chunk_overlap=token_max * 0.1,
         )
-        documents = PyPDFLoader(pdf_path).load_and_split(text_splitter)
+        documents = PyPDFLoader(pdf_path).load()
+        # documents = documents[:25]
+        # clean documents
+        for i, document in enumerate(documents):
+            documents[i].page_content = document.page_content.replace("\n", " ")
+        # only ascii characters
+        for i, document in enumerate(documents):
+            documents[i].page_content = "".join(
+                filter(lambda x: x in string.printable, document.page_content)
+            )
+        print(len(documents))
         return documents
 
     def length_function(self, documents: List[Document]) -> int:
@@ -63,9 +93,7 @@ class SummarizationService:
 
     # Here we generate a summary, given a document
     async def generate_summary(self, state: SummaryState):
-        print("generating summary")
         response = await self.map_chain.ainvoke(state["content"])
-        print(response)
         return {"summaries": [response]}
 
     # Here we define the logic to map out over the documents
@@ -107,25 +135,22 @@ class SummarizationService:
     # Here we will generate the final summary
     async def generate_final_summary(self, state: OverallState):
         response = await self.reduce_chain.ainvoke(state["collapsed_summaries"])
-        print(response)
         return {"final_summary": response}
 
-
-sum_service = SummarizationService()
-
-# Construct the graph
-# Nodes:
-graph = StateGraph(OverallState)
-graph.add_node("generate_summary", sum_service.generate_summary)  # same as before
-graph.add_node("collect_summaries", sum_service.collect_summaries)
-graph.add_node("collapse_summaries", sum_service.collapse_summaries)
-graph.add_node("generate_final_summary", sum_service.generate_final_summary)
-
-# Edges:
-graph.add_conditional_edges(START, sum_service.map_summaries, ["generate_summary"])
-graph.add_edge("generate_summary", "collect_summaries")
-graph.add_conditional_edges("collect_summaries", sum_service.should_collapse)
-graph.add_conditional_edges("collapse_summaries", sum_service.should_collapse)
-graph.add_edge("generate_final_summary", END)
-
-app = graph.compile()
+    async def generate_response(self, file_path: str):
+        documents = self.extract_pdf_text(file_path)
+        async for event in self.app.astream_events(
+            {"contents": [doc.page_content for doc in documents]},
+            {"recursion_limit": 10},
+            version="v1",
+        ):
+            kind = event["event"]
+            # if dict has langgraph_node, then it is a node event
+            langgraph_node = None
+            if "langgraph_node" in event["metadata"]:
+                langgraph_node = event["metadata"]["langgraph_node"]
+            # langgraph_node = event["metadata"]["langgraph_node"]
+            if kind == "on_llm_stream" and langgraph_node == "generate_final_summary":
+                content = event["data"]["chunk"]
+                if content:
+                    yield content

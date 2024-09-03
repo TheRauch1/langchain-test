@@ -1,26 +1,23 @@
-import asyncio
-
 from dotenv import load_dotenv
 
-from backend.model import Model
-from backend.summarize import SummarizationService, app
+from backend.summarize import SummarizationService
 
 load_dotenv()
 
 service = SummarizationService()
+from fastapi import APIRouter, FastAPI
+from fastapi.responses import StreamingResponse
+
+app = FastAPI()
+router = APIRouter()
 
 
-async def run():
-    async for step in app.astream(
-        {
-            "contents": [
-                doc.page_content
-                for doc in service.extract_pdf_text("data/somatosensory.pdf")
-            ]
-        },
-        {"recursion_limit": 10},
-    ):
-        print(list(step.keys()))
+@router.get("/summarize")
+async def summarize():
+    return StreamingResponse(
+        service.generate_response("data/1.pdf"),
+        media_type="text/event-stream",
+    )
 
 
-print(asyncio.run(run()))
+app.include_router(router)

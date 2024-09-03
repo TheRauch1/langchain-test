@@ -8,8 +8,7 @@ class Model:
         ollama_host_url = os.getenv("OLLAMA_HOST_URL")
         print(f"Ollama host url: {ollama_host_url}")
         self.model = Ollama(
-            model="llama3.1",
-            base_url=ollama_host_url,
+            model="llama3.1", base_url=ollama_host_url, num_ctx=6 * 1024
         )
 
     def generate_response(self, message: str):
