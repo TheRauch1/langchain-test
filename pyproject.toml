@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "bit-rag-test"
+version = "0.1.0"
+description = ""
+authors = ["TheRauch1 <kaj.rauch@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+ollama = "^0.2.1"
+python-dotenv = "^1.0.1"
+langchain = "^0.2.6"
+langchain-community = "^0.2.6"
+gradio = "^4.37.1"
+pypdf = "^4.2.0"
+pymilvus = "^2.4.4"
+langchain-milvus = "^0.1.1"
+ruff = "^0.4.10"
+langchain-experimental = "^0.0.62"
+tiktoken = "^0.7.0"
+black = "^24.8.0"
+isort = "^5.13.2"
+langgraph = "^0.2.16"
+transformers = "^4.44.2"
+
+[tool.isort]
+profile = "black"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
